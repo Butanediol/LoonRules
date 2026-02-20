@@ -23,6 +23,7 @@ const (
 
 var (
 	dataPath  = flag.String("datapath", "../domain-list-community/data", "Path to domain-list-community data directory")
+	geoipPath = flag.String("geoippath", "", "Path to geoip text directory (optional)")
 	outputDir = flag.String("outputdir", "./output", "Directory to place generated Loon rules files")
 )
 
@@ -68,7 +69,7 @@ func v2flyToLoonRule(entry *Entry) string {
 	return fmt.Sprintf("%s,%s,proxy", ruleType, entry.Value)
 }
 
-func writeLoonRuleFile(listName string, entries []*Entry, outputDir string) error {
+func writeLoonRuleFile(listName string, entries []*Entry, ipRules []string, outputDir string) error {
 	filename := strings.ToLower(listName) + ".list"
 	filePath := filepath.Join(outputDir, filename)
 
@@ -85,7 +86,57 @@ func writeLoonRuleFile(listName string, entries []*Entry, outputDir string) erro
 			fmt.Fprintln(w, rule)
 		}
 	}
+	for _, rule := range ipRules {
+		fmt.Fprintln(w, rule)
+	}
 	return w.Flush()
+}
+
+func loadGeoIPData(dir string) (map[string][]string, error) {
+	result := make(map[string][]string)
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		base := filepath.Base(path)
+		if !strings.HasSuffix(base, ".txt") {
+			return nil
+		}
+		name := strings.ToLower(strings.TrimSuffix(base, ".txt"))
+
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		var rules []string
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			var ruleType string
+			if strings.Contains(line, ":") {
+				ruleType = "IP-CIDR6"
+			} else {
+				ruleType = "IP-CIDR"
+			}
+			rules = append(rules, fmt.Sprintf("%s,%s,proxy,no-resolve", ruleType, line))
+		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("error reading %q: %w", path, err)
+		}
+		if len(rules) > 0 {
+			result[name] = rules
+		}
+		return nil
+	})
+	return result, err
 }
 
 func parseEntry(line string) (*Entry, []string, error) {
@@ -420,14 +471,38 @@ func run() error {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
+	var geoipMap map[string][]string
+	if *geoipPath != "" {
+		fmt.Printf("using geoip data in %q\n", *geoipPath)
+		geoipMap, err = loadGeoIPData(*geoipPath)
+		if err != nil {
+			return fmt.Errorf("failed to loadGeoIPData: %w", err)
+		}
+	}
+
+	// Collect the union of all names from both sources
+	allNames := make(map[string]bool)
+	for name := range processor.finalMap {
+		allNames[strings.ToLower(name)] = true
+	}
+	for name := range geoipMap {
+		allNames[name] = true
+	}
+
 	var listNames []string
-	for listName, entries := range processor.finalMap {
-		if err := writeLoonRuleFile(listName, entries, *outputDir); err != nil {
-			fmt.Printf("failed to write list %q: %v\n", listName, err)
+	for name := range allNames {
+		upperName := strings.ToUpper(name)
+		domainEntries := processor.finalMap[upperName]
+		ipRules := geoipMap[name]
+		if len(domainEntries) == 0 && len(ipRules) == 0 {
 			continue
 		}
-		listNames = append(listNames, strings.ToLower(listName))
-		fmt.Printf("list %q has been generated successfully.\n", listName)
+		if err := writeLoonRuleFile(name, domainEntries, ipRules, *outputDir); err != nil {
+			fmt.Printf("failed to write list %q: %v\n", name, err)
+			continue
+		}
+		listNames = append(listNames, name)
+		fmt.Printf("list %q has been generated successfully.\n", name)
 	}
 
 	slices.Sort(listNames)

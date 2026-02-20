@@ -29,8 +29,11 @@ jobs:
       - name: Clone domain-list-community
         run: git clone --depth 1 https://github.com/v2fly/domain-list-community.git
 
+      - name: Clone geoip
+        run: git clone --depth 1 -b release https://github.com/Loyalsoldier/geoip.git
+
       - name: Run converter
-        run: go run . --datapath ./domain-list-community/data --outputdir ./output
+        run: go run . --datapath ./domain-list-community/data --geoippath ./geoip/text --outputdir ./output
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
