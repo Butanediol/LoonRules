@@ -66,7 +66,7 @@ func v2flyToLoonRule(entry *Entry) string {
 	default:
 		return ""
 	}
-	return fmt.Sprintf("%s,%s,proxy", ruleType, entry.Value)
+	return fmt.Sprintf("%s,%s", ruleType, entry.Value)
 }
 
 func writeLoonRuleFile(listName string, entries []*Entry, ipRules []string, outputDir string) error {
@@ -126,7 +126,7 @@ func loadGeoIPData(dir string) (map[string][]string, error) {
 			} else {
 				ruleType = "IP-CIDR"
 			}
-			rules = append(rules, fmt.Sprintf("%s,%s,proxy,no-resolve", ruleType, line))
+			rules = append(rules, fmt.Sprintf("%s,%s,no-resolve", ruleType, line))
 		}
 		if err := scanner.Err(); err != nil {
 			return fmt.Errorf("error reading %q: %w", path, err)
